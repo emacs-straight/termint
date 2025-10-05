@@ -1,12 +1,29 @@
 ;;; termint.el --- Run REPLs in a terminal backend -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2025 Free Software Foundation, Inc.
+
 ;; Author: Milan Glacier <dev@milanglacier.com>
 ;; Maintainer: Milan Glacier <dev@milanglacier.com>
-;; Version: 0.1
+;; Version: 0.1.1
 ;; URL: https://github.com/milanglacier/termint.el
 ;; Package-Requires: ((emacs "29.1"))
 
-;;; This file is NOT part of GNU Emacs
+;; This file is part of GNU Emacs
+
+;; This program is free software; you can redistribute it and/or modify
+;; it under the terms of the GNU General Public License as published by
+;; the Free Software Foundation; either version 3, or (at your option)
+;; any later version.
+
+;; This program is distributed in the hope that it will be useful,
+;; but WITHOUT ANY WARRANTY; without even the implied warranty of
+;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;; GNU General Public License for more details.
+
+;; You should have received a copy of the GNU General Public License
+;; along with this program; see the file COPYING.  If not, write to
+;; the Free Software Foundation, Inc., 51 Franklin Street, Fifth
+;; Floor, Boston, MA 02110-1301, USA.
 
 ;;; License:
 
@@ -27,9 +44,18 @@
 
 ;;; Commentary:
 
-;; This package offers macros and functions for creating and managing
-;; REPL sessions within a terminal emulator backend (term, eat, or
-;; vterm).  It facilitates the creation of custom REPL commands
+;; termint provides a flexible way to define and manage interactions
+;; with REPLs and CLI apps running inside a terminal emulator backend
+;; within Emacs.  It allows you to easily configure how Emacs
+;; communicates with different REPLs, leveraging the capabilities of
+;; fully-featured terminal emulators like `term', `vterm', or `eat'.
+
+;; Instead of relying on Emacs’s built-in “dumb” terminal
+;; (`comint-mode'), termint runs REPLs in a full terminal emulator,
+;; enabling features like bracketed paste mode, proper rendering, and
+;; potentially advanced interaction for complex terminal applications.
+
+;; It facilitates the creation of custom REPL commands
 ;; tailored to each defined REPL, with features including starting
 ;; session, sending code, and hiding REPL windows.  This is useful for
 ;; integrating terminal-based REPLs with Emacs efficiently.
@@ -43,7 +69,9 @@
   :group 'tools)
 
 (defcustom termint-backend 'term
-  "The backend to use for REPL sessions."
+  "The backend to use for REPL sessions.
+Supported backends include `eat', `vterm', and the built-in `term'.
+Note that `eat' and `vterm' must be installed separately."
   :type '(choice (const :tag "eat" eat)
                  (const :tag "vterm" vterm)
                  (const :tag "term" term)))
@@ -81,11 +109,11 @@
 REPL-NAME is used to determine the buffer name, REPL-CMD is used to
 determine the shell command.  SESSION is a numeric suffix for the
 buffer name."
-  (let* ((repl-buffer-name (format "*%s*" repl-name))
-         (repl-shell (if (functionp repl-cmd)
-                         (funcall repl-cmd)
-                       repl-cmd)))
-    (pcase termint-backend
+  (let ((repl-buffer-name (format "*%s*" repl-name))
+        (repl-shell (if (functionp repl-cmd)
+                        (funcall repl-cmd)
+                      repl-cmd)))
+    (pcase-exhaustive termint-backend
       ('eat (termint--start-eat-backend repl-buffer-name repl-shell session))
       ('vterm (termint--start-vterm-backend repl-buffer-name repl-shell session))
       ('term
@@ -100,14 +128,14 @@ without a number is considered as session 0."
   (interactive)
   (when-let* ((buffer-name (prog1 (buffer-name)
                              (rename-buffer (concat (buffer-name) "--tmp"))))
-              (repl-name (when (string-match "^\\*\\(.*\\)\\*" buffer-name)
-                           (match-string 1 buffer-name)))
+              (repl-name (and (string-match "^\\*\\(.*\\)\\*" buffer-name)
+                              (match-string 1 buffer-name)))
               (sessions (seq-filter
                          #'get-buffer
-                         `(,(format "*%s*" repl-name)
-                           ,@(mapcar
-                              (lambda (x) (format "*%s*<%d>" repl-name x))
-                              (number-sequence 1 9))))))
+                         (cons (format "*%s*" repl-name)
+                               (mapcar
+                                (lambda (x) (format "*%s*<%d>" repl-name x))
+                                (number-sequence 1 9))))))
     (cl-loop for session in sessions
              for idx from 0
              do (with-current-buffer session
@@ -202,14 +230,12 @@ with REPL-NAME, initialized during each `termint-define' call."
          (bracketed-paste-start "\e[200~")
          (bracketed-paste-end "\e[201~")
          (string (funcall str-process-func string))
-         (start-pattern (if (stringp start-pattern) start-pattern
-                          (if multi-lines-p
-                              (plist-get start-pattern :multi-lines)
-                            (plist-get start-pattern :single-line))))
-         (end-pattern (if (stringp end-pattern) end-pattern
-                        (if multi-lines-p
-                            (plist-get end-pattern :multi-lines)
-                          (plist-get end-pattern :single-line))))
+         (start-pattern (cond ((stringp start-pattern) start-pattern)
+                              (multi-lines-p (plist-get start-pattern :multi-lines))
+                              (t (plist-get start-pattern :single-line))))
+         (end-pattern (cond ((stringp end-pattern) end-pattern)
+                            (multi-lines-p (plist-get end-pattern :multi-lines))
+                            (t (plist-get end-pattern :single-line))))
          (final-string
           (if multi-lines-p
               (concat start-pattern
@@ -291,10 +317,10 @@ line of that matches SOURCE-COMMAND."
   (save-excursion
     (if-let*
         ((beg (and
-               (funcall #'beginning-of-defun nil)
+               (beginning-of-defun)
                (point)))
          (end (progn
-                (funcall #'end-of-defun nil)
+                (end-of-defun)
                 (point))))
         (cons beg end)
       (message "No defun found at point")

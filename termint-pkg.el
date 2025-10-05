@@ -1,2 +1,2 @@
 ;; Generated package description from termint.el  -*- mode: lisp-data; no-byte-compile: t -*-
-(define-package "termint" "0.1.0.20250908.11321" "Run REPLs in a terminal backend" '((emacs "29.1")) :commit "7064689e6fdcdee1821a50b9dbf1aa09caf8b8ba" :authors '(("Milan Glacier" . "dev@milanglacier.com")) :maintainer '("Milan Glacier" . "dev@milanglacier.com") :url "https://github.com/milanglacier/termint.el")
+(define-package "termint" "0.1.1.0.20251004.2413" "Run REPLs in a terminal backend" '((emacs "29.1")) :commit "7f908bfe9bbaeb624b44285bebff6b52e0ccebcc" :authors '(("Milan Glacier" . "dev@milanglacier.com")) :maintainer '("Milan Glacier" . "dev@milanglacier.com") :url "https://github.com/milanglacier/termint.el")
