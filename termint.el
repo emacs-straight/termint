@@ -4,7 +4,7 @@
 
 ;; Author: Milan Glacier <dev@milanglacier.com>
 ;; Maintainer: Milan Glacier <dev@milanglacier.com>
-;; Version: 0.1.1
+;; Version: 0.2
 ;; URL: https://github.com/milanglacier/termint.el
 ;; Package-Requires: ((emacs "29.1"))
 
@@ -64,6 +64,22 @@
 
 (require 'cl-lib)
 
+(defvar vterm-buffer-name)
+(defvar vterm-shell)
+(declare-function vterm-send-string "vterm")
+(declare-function vterm "vterm")
+
+(defvar eat-buffer-name)
+(defvar eat-shell)
+(declare-function eat "eat")
+(declare-function eat--send-string "eat")
+(declare-function eat--synchronize-scroll "eat")
+
+(declare-function term-exec "term")
+(declare-function term-mode "term")
+(declare-function term-char-mode "term")
+(declare-function term-send-raw-string "term")
+
 (defgroup termint nil
   "Group for termint."
   :group 'tools)
@@ -80,21 +96,49 @@ Note that `eat' and `vterm' must be installed separately."
   '((t :inherit font-lock-comment-face))
   "Face used for displaying hint of source command.")
 
-(defvar vterm-buffer-name)
-(defvar vterm-shell)
-(declare-function vterm-send-string "vterm")
-(declare-function vterm "vterm")
+(defcustom termint-region-dispatchers
+  '(("paragraph" . termint--dispatch-paragraph)
+    ("buffer" . termint--dispatch-buffer)
+    ("defun" . termint--dispatch-defun))
+  "Alist mapping dispatchable region types to dispatcher functions.
+Each element is of the form (NAME . DISPATCHER).  The NAME is appended
+to generated command names (e.g., `termint-ipython-send-NAME' and
+`termint-ipython-source-NAME' for an ipython schema), while DISPATCHER
+should be a function returning a cons cell (BEG . END) for the
+corresponding region.  Customize this before calling `termint-define'
+to generate additional region commands automatically for each REPL
+schema."
+  :type '(alist :key-type string :value-type function))
 
-(defvar eat-buffer-name)
-(defvar eat-shell)
-(declare-function eat "eat")
-(declare-function eat--send-string "eat")
-(declare-function eat--synchronize-scroll "eat")
+(defcustom termint-schema-custom-commands nil
+  "Alist of extra commands generated for each REPL schema.
+Each element takes the form (SUFFIX . FN).  SUFFIX is a string
+appended to `termint-REPL-NAME-` to create the final command name for
+every schema defined via `termint-define`.  FN is the function invoked
+by the generated command.  It receives two arguments: REPL-NAME and
+SESSION.  See `termint--hide-window` for a reference implementation of
+the expected function signature.  Configure this variable before
+invoking `termint-define` to ensure the custom commands are
+generated."
+  :type '(alist :key-type string :value-type function))
 
-(declare-function term-exec "term")
-(declare-function term-mode "term")
-(declare-function term-char-mode "term")
-(declare-function term-send-raw-string "term")
+(defcustom termint-mode-map-additional-keys
+  '(("f" . "send-defun")
+    ("F" . "source-defun")
+    ("b" . "send-buffer")
+    ("B" . "source-buffer")
+    ("p" . "send-paragraph")
+    ("P" . "source-paragraph"))
+  "Alist of keys and command suffixes to add to generated REPL keymaps.
+Each element is a cons cell of the form (KEY . SUFFIX).  KEY is the
+string sequence to bind.  SUFFIX is a string appended to
+`termint-REPL-NAME-' to resolve the actual command symbol (e.g.,
+\"send-defun\" becomes `termint-ipython-send-defun' when defining an
+ipython REPL).  This variable should be modified before calling
+`termint-define' to affect the generated keymaps."
+  :type '(alist :key-type string :value-type string))
+
+
 
 (defun termint--get-session-suffix (session)
   "Return the session suffix from SESSION if interactive spec is \"P\"."
@@ -119,7 +163,6 @@ buffer name."
       ('term
        (termint--start-term-backend repl-buffer-name repl-shell session)))))
 
-
 (defun termint--rearrange-session-on-buffer-exit ()
   "Renumber sibling REPL sessions.
 This function is called after one session is killed to maintain
@@ -143,7 +186,6 @@ without a number is considered as session 0."
                    (if (eq 0 idx)
                        (rename-buffer (format "*%s*" repl-name))
                      (rename-buffer (format "*%s*<%d>" repl-name idx))))))))
-
 
 (defun termint--start-term-backend (repl-buffer-name repl-shell session)
   "Start REPL-SHELL in REPL-BUFFER-NAME with numeric SESSION with term backend."
@@ -199,8 +241,7 @@ without a number is considered as session 0."
                  #'termint--rearrange-session-on-buffer-exit
                  t)))
 
-
-
+
 
 (defun termint--send-string
     (string
@@ -346,9 +387,6 @@ before sending."
         (funcall send-string-func string session))
     (message "Invalid region from dispatcher - nothing sent to REPL")))
 
-
-
-
 (defun termint--hide-window (repl-name session)
   "Hide the REPL window.
 The target REPL buffer is specified by REPL-NAME and SESSION."
@@ -370,10 +408,7 @@ REPL-NAME."
         (replace-regexp-in-string "{{file}}" file source-syntax))
     (funcall source-syntax str)))
 
-
-
-
-
+
 
 (defmacro termint-define (repl-name repl-cmd &rest args)
   "Define a REPL schema.
@@ -480,15 +515,24 @@ enabled.  The default value is nil."
         (start-pattern-name (intern (concat "termint-" repl-name "-start-pattern")))
         (end-pattern-name (intern (concat "termint-" repl-name "-end-pattern")))
         (send-delayed-final-ret-name (intern (concat "termint-" repl-name "-send-delayed-final-ret")))
-        ;; send paragraph and source paragraph
-        (send-paragraph-func-name (intern (concat "termint-" repl-name "-send-paragraph")))
-        (source-paragraph-func-name (intern (concat "termint-" repl-name "-source-paragraph")))
-        ;; send buffer and source buffer
-        (send-buffer-func-name (intern (concat "termint-" repl-name "-send-buffer")))
-        (source-buffer-func-name (intern (concat "termint-" repl-name "-source-buffer")))
-        ;; send defun and source defun
-        (send-defun-func-name (intern (concat "termint-" repl-name "-send-defun")))
-        (source-defun-func-name (intern (concat "termint-" repl-name "-source-defun"))))
+        (region-definitions
+         (cl-loop for entry in termint-region-dispatchers
+                  for region-name = (car entry)
+                  for dispatcher = (cdr entry)
+                  for send-func-name = (intern (format "termint-%s-send-%s" repl-name region-name))
+                  for source-func-name = (intern (format "termint-%s-source-%s" repl-name region-name))
+                  collect (list :name region-name
+                                :dispatcher dispatcher
+                                :send send-func-name
+                                :source source-func-name)))
+        (custom-command-definitions
+         (cl-loop for entry in termint-schema-custom-commands
+                  for name = (car entry)
+                  for func = (cdr entry)
+                  for command-name = (intern (format "termint-%s-%s" repl-name name))
+                  collect (list :name name
+                                :func func
+                                :command command-name))))
 
     `(progn
 
@@ -565,62 +609,27 @@ process with that number."
                                ,str-process-func-name
                                ,send-delayed-final-ret-name))
 
-       (defun ,send-paragraph-func-name (&optional session)
-         ,(format
-           "Send the current paragraph to %s.
-With numeric prefix SESSION, send paragraph to the process associated
-with that number." repl-name)
-         (interactive "P")
-         (termint--dispatch-region-and-send
-          #'termint--dispatch-paragraph ,repl-name session nil))
-
-       (defun ,source-paragraph-func-name (&optional session)
-         ,(format
-           "Source the current paragraph to %s.
-With numeric prefix SESSION, send paragraph to the process associated
-with that number." repl-name)
-         (interactive "P")
-         (termint--dispatch-region-and-send
-          #'termint--dispatch-paragraph ,repl-name
-          session ,source-syntax-name))
-
-       (defun ,send-buffer-func-name (&optional session)
-         ,(format
-           "Send the current buffer to %s.
-With numeric prefix SESSION, send buffer to the process associated
-with that number." repl-name)
-         (interactive "P")
-         (termint--dispatch-region-and-send
-          #'termint--dispatch-buffer ,repl-name session nil))
-
-       (defun ,source-buffer-func-name (&optional session)
-         ,(format
-           "Source the current buffer to %s.
-With numeric prefix SESSION, send buffer to the process associated
-with that number." repl-name)
-         (interactive "P")
-         (termint--dispatch-region-and-send
-          #'termint--dispatch-buffer ,repl-name
-          session ,source-syntax-name))
-
-       (defun ,send-defun-func-name (&optional session)
-         ,(format
-           "Send the current defun to %s.
-With numeric prefix SESSION, send defun to the process associated
-with that number." repl-name)
-         (interactive "P")
-         (termint--dispatch-region-and-send
-          #'termint--dispatch-defun ,repl-name session nil))
-
-       (defun ,source-defun-func-name (&optional session)
-         ,(format
-           "Source the current defun to %s.
-With numeric prefix SESSION, send defun to the process associated
-with that number." repl-name)
-         (interactive "P")
-         (termint--dispatch-region-and-send
-          #'termint--dispatch-defun ,repl-name
-          session ,source-syntax-name))
+       ,@(cl-loop for entry in region-definitions append
+                  (list
+                   `(defun ,(plist-get entry :send) (&optional session)
+                      ,(format
+                        "Send the current %s to %s.
+With numeric prefix SESSION, send %s to the process associated
+with that number."
+                        (plist-get entry :name) repl-name (plist-get entry :name))
+                      (interactive "P")
+                      (termint--dispatch-region-and-send
+                       #',(plist-get entry :dispatcher) ,repl-name session nil))
+                   `(defun ,(plist-get entry :source) (&optional session)
+                      ,(format
+                        "Source the current %s to %s.
+With numeric prefix SESSION, send %s to the process associated
+with that number."
+                        (plist-get entry :name) repl-name (plist-get entry :name))
+                      (interactive "P")
+                      (termint--dispatch-region-and-send
+                       #',(plist-get entry :dispatcher) ,repl-name
+                       session ,source-syntax-name))))
 
        (when (require 'evil nil t)
          (evil-define-operator ,send-region-operator-name (beg end session)
@@ -649,22 +658,37 @@ suffix." repl-name)
          (interactive "P")
          (termint--hide-window ,repl-name session))
 
+       ,@(cl-loop for entry in custom-command-definitions append
+                  (let ((suffix (plist-get entry :name))
+                        (fn (plist-get entry :func))
+                        (command (plist-get entry :command)))
+                    (list
+                     `(defun ,command (&optional session)
+                        ,(format
+                          "Run custom command `%s' for %s.
+Generated from `termint-schema-custom-commands'.
+Calls `%S' with REPL-NAME and optional SESSION."
+                          suffix repl-name fn)
+                        (interactive "P")
+                        (funcall #',fn ,repl-name session)))))
+
        (defvar ,keymap-name
          (let ((map (make-sparse-keymap)))
            (define-key map "s" #',start-func-name)
            (define-key map "r" #',send-region-func-name)
            (define-key map "R" #',source-region-func-name)
            (define-key map "e" #',send-string-func-name)
-           (define-key map "p" #',send-paragraph-func-name)
-           (define-key map "f" #',send-defun-func-name)
-           (define-key map "P" #',source-paragraph-func-name)
-           (define-key map "b" #',send-buffer-func-name)
-           (define-key map "B" #',source-buffer-func-name)
-           (define-key map "F" #',source-defun-func-name)
            (define-key map "h" #',hide-window-func-name)
            (when (require 'evil nil t)
              (define-key map "r" #',send-region-operator-name)
              (define-key map "R" #',source-region-operator-name))
+           (dolist (binding termint-mode-map-additional-keys)
+             (let ((key (car binding))
+                   (suffix (cdr binding)))
+               (when-let* ((command (intern-soft (format "termint-%s-%s"
+                                                         ,repl-name suffix)))
+                           ((fboundp command)))
+                 (define-key map key command))))
            map)
          ,(format "Keymap for %s REPL commands." repl-name)))))
 
@@ -687,6 +711,8 @@ ensure that the file is not deleted.  In these cases, pass
 `:source-syntax' as a function.  When the `:source-syntax' is supplied
 as a string, the temporary file will be automatically deleted
 afterward.")
+
+
 
 (defvar termint-ipython-source-syntax-template
   "%run -i \"{{file}}\""
